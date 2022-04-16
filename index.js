@@ -4,6 +4,7 @@ const debug = require('debug')('route-cache')
 const queues = Object.create(null)
 
 const defaults = {
+  keyPrefix: '',
   max: 64 * 1000000, // ~64mb
   length: function (n, key) {
     if (n.body && typeof n.body === 'string') {
@@ -21,11 +22,14 @@ module.exports.config = function (opts) {
       defaults.max = opts.max
     }
 
+    defaults.keyPrefix = opts.keyPrefix || ''
+
     if (opts.cacheStore) {
       cacheStore = opts.cacheStore
     } else {
       cacheStore = new LruStore(defaults)
     }
+
     module.exports.cacheStore = cacheStore
   }
   return this
@@ -41,6 +45,11 @@ function drainQueue (key) {
   delete queues[key]
 }
 
+function maybeAddPrefix (key) {
+  if (!defaults.keyPrefix) { return key }
+  return defaults.keyPrefix + key
+}
+
 module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
   const ttl = secondsTTL * 1000
   return function (req, res, next) {
@@ -53,7 +62,9 @@ module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
       key = cacheKey // custom key
     }
 
-    cacheStore.get('redirect:' + key).then((redirectKey) => {
+    key = maybeAddPrefix(key)
+
+    cacheStore.get(key + ':redirect').then((redirectKey) => {
       if (redirectKey) {
         res.redirect(redirectKey.status, redirectKey.url)
         return true
@@ -157,7 +168,7 @@ module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
             }
           }
 
-          cacheStore.set('redirect:' + key, { url: address, status: status }, ttl)
+          cacheStore.set(key + ':redirect', { url: address, status: status }, ttl)
           res.original_redirect(status, address)
           return drainQueue(key)
         }
@@ -167,7 +178,7 @@ module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
       } else {
         debug(key, '>> has queue.length:', queues[key].length)
         queues[key].push(function () {
-          cacheStore.get('redirect:' + key)
+          cacheStore.get(key + ':redirect')
             .then((redirectKey) => {
               if (redirectKey) {
                 res.redirect(redirectKey.status, redirectKey.url)
@@ -194,8 +205,9 @@ module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
 }
 
 module.exports.removeCache = function (url) {
-  cacheStore.del('redirect:' + url)
-  cacheStore.del(url)
+  const key = maybeAddPrefix(url)
+  cacheStore.del(key + ':redirect')
+  cacheStore.del(key)
 }
 
 module.exports.cacheStore = cacheStore
