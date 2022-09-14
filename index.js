@@ -12,24 +12,23 @@ const defaults = {
     }
     return 1
   },
+  metrics: {
+    requestCounter: undefined,
+    hitCounter: undefined,
+    normalizePath: undefined
+  },
   maxAge: 200 // deletes stale cache older than 200ms
 }
 let cacheStore = new LruStore(defaults)
 
 module.exports.config = function (opts) {
   if (opts) {
-    if (opts.max) {
-      defaults.max = opts.max
-    }
-
-    defaults.keyPrefix = opts.keyPrefix || ''
-
+    Object.assign(defaults, opts)
     if (opts.cacheStore) {
       cacheStore = opts.cacheStore
     } else {
       cacheStore = new LruStore(defaults)
     }
-
     module.exports.cacheStore = cacheStore
   }
   return this
@@ -50,6 +49,27 @@ function maybeAddPrefix (key) {
   return defaults.keyPrefix + key
 }
 
+function getNormalizedPath (path) {
+  if (defaults.metrics.normalizePath) {
+    return defaults.metrics.normalizePath(path)
+  }
+  // If no normalize function is provided use an empty path. Otherwise this
+  // will blow up the number of time series.
+  return ''
+}
+
+function countRequest (path) {
+  if (defaults.metrics.requestCounter) {
+    defaults.metrics.requestCounter.inc({ path: getNormalizedPath(path) })
+  }
+}
+
+function countHit (path) {
+  if (defaults.metrics.hitCounter) {
+    defaults.metrics.hitCounter.inc({ path: getNormalizedPath(path) })
+  }
+}
+
 module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
   const ttl = secondsTTL * 1000
   return function (req, res, next) {
@@ -64,9 +84,11 @@ module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
 
     key = maybeAddPrefix(key)
 
+    countRequest(req.path)
     cacheStore.get(key + ':redirect').then((redirectKey) => {
       if (redirectKey) {
         res.redirect(redirectKey.status, redirectKey.url)
+        countHit(req.path)
         return true
       }
       return false
@@ -81,6 +103,7 @@ module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
           } else {
             res.send(value.body)
           }
+          countHit(req.path)
           return true
         }
         return false
@@ -192,6 +215,7 @@ module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
                 const value = cachedValue || {}
                 debug('>> queued hit:', key, value.length)
                 if (value.isJson) {
+                  countHit(req.path)
                   res.json(value.body)
                 } else {
                   res.send(value.body)
