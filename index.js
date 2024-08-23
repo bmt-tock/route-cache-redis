@@ -6,6 +6,7 @@ const queues = Object.create(null)
 const defaults = {
   keyPrefix: '',
   max: 64 * 1000000, // ~64mb
+  cacheRedirects: true,
   length: function (n, key) {
     if (n.body && typeof n.body === 'string') {
       return n.body.length
@@ -191,7 +192,9 @@ module.exports.cacheSeconds = function (secondsTTL, cacheKey) {
             }
           }
 
-          cacheStore.set(key + ':redirect', { url: address, status: status }, ttl)
+          if (defaults.cacheRedirects) {
+            cacheStore.set(key + ':redirect', { url: address, status: status }, ttl)
+          }
           res.original_redirect(status, address)
           return drainQueue(key)
         }
